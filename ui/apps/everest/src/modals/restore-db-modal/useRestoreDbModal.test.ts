@@ -78,10 +78,18 @@ vi.mock('./resolve-restore-action', () => ({
     mockResolveRestoreAction(...args),
 }));
 
+// Matches Instance status.backup.storages[].pitr (resolved by resolvePitrWindow).
 const availablePitr = {
+  state: 'Available' as const,
+  earliestRestorableTime: '2026-07-29T08:00:00Z',
+  latestRestorableTime: '2026-07-29T10:00:00Z',
+};
+
+const availablePitrWindow = {
   available: true,
-  earliest: '2026-07-29T08:00:00Z',
-  latest: '2026-07-29T10:00:00Z',
+  earliest: new Date(availablePitr.earliestRestorableTime),
+  latest: new Date(availablePitr.latestRestorableTime),
+  message: undefined,
 };
 
 const renderRestoreHook = async (
@@ -254,6 +262,30 @@ describe('useRestoreDbModal RBAC filtering', () => {
     stopAuthorizerFetchLoop();
   });
 
+  it('offers every PITR storage when RBAC is disabled', async () => {
+    await resetRBAC();
+    mockUseDbInstance.mockReturnValue({
+      data: {
+        status: {
+          backup: {
+            storages: [
+              { name: 'storage-a', pitr: availablePitr },
+              { name: 'storage-b', pitr: availablePitr },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await renderRestoreHook();
+
+    expect(result.current.pitrStorages).toEqual([
+      { name: 'storage-a', window: availablePitrWindow },
+      { name: 'storage-b', window: availablePitrWindow },
+    ]);
+    expect(result.current.isPitrHiddenByPermissions).toBe(false);
+  });
+
   it('only offers PITR storages the user can read', async () => {
     mockUseDbInstance.mockReturnValue({
       data: {
@@ -277,8 +309,8 @@ describe('useRestoreDbModal RBAC filtering', () => {
 
     const result = await renderRestoreHook();
 
-    expect(result.current.pitrStorages.map((storage) => storage.name)).toEqual([
-      'readable-storage',
+    expect(result.current.pitrStorages).toEqual([
+      { name: 'readable-storage', window: availablePitrWindow },
     ]);
     expect(result.current.isPitrHiddenByPermissions).toBe(false);
   });
@@ -304,5 +336,23 @@ describe('useRestoreDbModal RBAC filtering', () => {
 
     expect(result.current.pitrStorages).toEqual([]);
     expect(result.current.isPitrHiddenByPermissions).toBe(true);
+  });
+
+  it('does not hide PITR when the instance has no PITR storages', async () => {
+    mockUseDbInstance.mockReturnValue({
+      data: {
+        status: {
+          backup: {
+            storages: [{ name: 'storage-without-pitr' }],
+          },
+        },
+      },
+    });
+
+    const result = await renderRestoreHook();
+
+    expect(result.current.pitrStorages).toEqual([]);
+    // No candidates → show the option (disabled), same as before this PR.
+    expect(result.current.isPitrHiddenByPermissions).toBe(false);
   });
 });
